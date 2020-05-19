@@ -18,8 +18,12 @@ from forms import (PasswordDialog, AboutDialog)
 # *****          WebPage
 # ******************************************************************************** #
 
+## @brief Browser page class derived from `QtWebEngineWidgets.QWebEnginePage`.
+# Implements user authentication and customizable feature permissions.
 class WebPage(QtWebEngineWidgets.QWebEnginePage):
 
+    ## @param profile `QtWebEngineWidgets.QWebEngineProfile` web profile
+    # @param parent `QtWidget.QWidget` parent widget (`WebView`)
     def __init__(self, profile: QtWebEngineWidgets.QWebEngineProfile, parent=None):
         super().__init__(profile, parent)
         self.authenticationRequired.connect(self.on_authenticationRequired)
@@ -31,10 +35,8 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         except:
             pass
 
+    ## Override event to get user choice: ignore or reject certificate error.
     def certificateError(self, error: QtWebEngineWidgets.QWebEngineCertificateError):
-        """
-        Override event to get user choice: ignore or reject certificate error.
-        """
         mainwindow = self.view().window()
         deferredError = error
         deferredError.defer()
@@ -53,6 +55,10 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         QtCore.QTimer.singleShot(0, mainwindow, handle_error)        
         return True
 
+    ## @brief Handler called when user authentication is required.
+    # Shows a password dialog and gets the entered login and password.
+    # @param requestUrl `QtCore.QUrl` URL of the page requiring authentication
+    # @param authenticator `QAuthenticator` authenticator object
     @QtCore.pyqtSlot('QUrl, QAuthenticator*')
     def on_authenticationRequired(self, requestUrl, authenticator):
         mainwindow = self.view().window()
@@ -64,6 +70,18 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         authenticator.setUser(auth[0])
         authenticator.setPassword(auth[1])
 
+    ## @brief Handler called when a feature permission like audio/video capture is requested.
+    # Asks the user showing a simple Yes/No dialog and sets the corresponding permissions.
+    # @param securityOrigin `QtCore.QUrl` URL on the resource that requested
+    # feature permissions
+    # @param feature `QtWebEngineWidgets.QWebEnginePage.Feature` requested feature, one of:
+    #   * Geolocation: collect geolocation info
+    #   * MediaAudioCapture: record audio (access to the mic)
+    #   * MediaVideoCapture: record video (access to the webcam)
+    #   * MouseLock: lock user's mouse
+    #   * DesktopVideoCapture: capture screen
+    #   * DesktopAudioVideoCapture: capture screen + sound card
+    #   * Notifications: pop up notifications
     @QtCore.pyqtSlot(QtCore.QUrl, QtWebEngineWidgets.QWebEnginePage.Feature)
     def on_featurePermissionRequested(self, securityOrigin, feature):
         questions = {QtWebEngineWidgets.QWebEnginePage.Geolocation: _('Allow {} to access your location information?'),
@@ -80,10 +98,17 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         else:
             self.setFeaturePermission(securityOrigin, feature, QtWebEngineWidgets.QWebEnginePage.PermissionDeniedByUser)
 
+    ## @brief Handler called when the connection requires proxy authentication
+    # Shows a login/password dialog and collects the user data.
+    # @param requestUrl `QtCore.QUrl` URL of the page requiring authentication
+    # @param authenticator `QAuthenticator` authenticator object
+    # @param proxyHost `str` current proxy host address
     @QtCore.pyqtSlot('QUrl, QAuthenticator*, QString')
     def on_proxyAuthenticationRequired(self, requestUrl, authenticator, proxyHost):
         mainwindow = self.view().window()
-        dia = PasswordDialog(user_label=_('Proxy user'), password_label=_('Proxy password'), parent=mainwindow)
+        dia = PasswordDialog(title=f"{_('Authentication')}: {proxyHost}", 
+                             user_label=_('Proxy user'), 
+                             password_label=_('Proxy password'), parent=mainwindow)
         if not dia.exec():
             authenticator = None
             return
@@ -91,6 +116,8 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         authenticator.setUser(auth[0])
         authenticator.setPassword(auth[1])
 
+    ## @brief Handler called when a website requests permission to handle links.
+    # @param request `QtWebEngineCore.QWebEngineRegisterProtocolHandlerRequest` request for permission
     @QtCore.pyqtSlot(QtWebEngineCore.QWebEngineRegisterProtocolHandlerRequest)
     def on_registerProtocolHandlerRequested(self, request):
         mainwindow = self.view().window()
@@ -99,6 +126,8 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         else:
             request.reject()
 
+    ## @brief Handler called when an HTTPS certificate is selected.
+    # @param selection `QWebEngineClientCertificateSelection` certificate object
     @QtCore.pyqtSlot('QWebEngineClientCertificateSelection')
     def on_selectClientCertificate(self, selection):
         try:
@@ -111,38 +140,58 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
 # *****          WebView
 # ******************************************************************************** #
 
+## Simple popup window that the browser may show.
 class WebPopupWindow(QtWidgets.QWidget):
     pass
 
+## @brief Main widget component of the web browser used to view and edit web documents.
+# Contains a single `WebPage` object.
 class WebView(QtWebEngineWidgets.QWebEngineView):
 
+    ## signal emitted when a web action (back, forward etc) is changed (e.g. disabled / enabled)
     webActionEnabledChanged = QtCore.pyqtSignal(QtWebEngineWidgets.QWebEnginePage.WebAction, bool)
+    ## signal emitted when the page favicon is changed
     favIconChanged = QtCore.pyqtSignal(QtGui.QIcon)
+    ## signal emitted when the user requests the Developer Tools on that page
     devToolsRequested = QtCore.pyqtSignal(QtWebEngineWidgets.QWebEnginePage)
 
+    # @param parent `QtWidget.QWidget` parent widget (`TabWidget`)
     def __init__(self, parent=None):
         QtWebEngineWidgets.QWebEngineView.__init__(self, parent)
+        ## `int` page load status (%)
         self.m_loadProgress = 100
+        # connect signals to custom handlers
         self.loadStarted.connect(self.on_loadStarted)
         self.loadProgress.connect(self.on_loadProgress)
         self.loadFinished.connect(self.on_loadFinished)
         self.iconChanged.connect(self.on_iconChanged)
         self.renderProcessTerminated.connect(self.on_renderProcessTerminated)
 
+    ## Makes `page` the new web page of the web view.
+    # @param page `QtWebEngineWidgets.QWebEnginePage` new page
     def setPage(self, page):
+        # create & connect the action trigger signals to the new page
         self.createWebActionTrigger(page, QtWebEngineWidgets.QWebEnginePage.Forward)
         self.createWebActionTrigger(page, QtWebEngineWidgets.QWebEnginePage.Back)
         self.createWebActionTrigger(page, QtWebEngineWidgets.QWebEnginePage.Reload)
         self.createWebActionTrigger(page, QtWebEngineWidgets.QWebEnginePage.Stop)
         super().setPage(page)
 
+    ## Connects the web action Changed signal to custom signal.
+    # @param page `QtWebEngineWidgets.QWebEnginePage` web page whose action we are connecting
+    # @param webAction `QtWebEngineWidgets.QWebEnginePage.WebAction` web action to connect
     def createWebActionTrigger(self, page, webAction):
         action = page.action(webAction)
         action.changed.connect(QtCore.pyqtSlot()(lambda: self.webActionEnabledChanged.emit(webAction, action.isEnabled())))
 
+    ## Checks if a web action is enabled.
+    # @param webAction `QtWebEngineWidgets.QWebEnginePage.WebAction` web action to check
+    # @returns `bool` the action's Enabled status
     def isWebActionEnabled(self, webAction):
         return self.page().action(webAction).isEnabled()
 
+    ## Returns the current page's favicon.
+    # @returns `QtGui.QIcon` the favicon
     def favIcon(self):
         icon = self.icon()
         if icon: return icon
@@ -152,6 +201,9 @@ class WebView(QtWebEngineWidgets.QWebEngineView):
             return QtGui.QIcon(f"{ICONFOLDER}/repeat-1.png")
         return QtGui.QIcon(f"{ICONFOLDER}/worldwide.png")
 
+    ## Creates a new GUI window for the page depending on the window type.
+    # @param windowtype `QtWebEngineWidgets.QWebEnginePage.WebWindowType` type of the new window
+    # @returns `QtWidgets.QWidget` new window
     def createWindow(self, windowtype):
         mainWindow = self.window()
         if not mainWindow: return None
@@ -167,6 +219,9 @@ class WebView(QtWebEngineWidgets.QWebEngineView):
             return popup.view()
         return None
 
+    ## Handles the context (right-click) menu for the page 
+    # showing a menu with available web actions.
+    # @param event `QtGui.QContextMenuEvent` the context menu event
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent):
         menu = self.page().createStandardContextMenu()
         actions = menu.actions()
@@ -183,27 +238,39 @@ class WebView(QtWebEngineWidgets.QWebEngineView):
 
         menu.popup(event.globalPos())
 
+    ## Handler called when a context menu action is triggered.
     @QtCore.pyqtSlot(bool)
     def on_menu_action(self, checked):
         self.devToolsRequested.emit(self.page())
 
+    ## Handler called when page loading has started.
     @QtCore.pyqtSlot()
     def on_loadStarted(self):
         self.favIconChanged.emit(self.favIcon())
 
+    ## Handler called while the page is being loaded.
+    # @param value `int` current load progress (%)
     @QtCore.pyqtSlot(int)
     def on_loadProgress(self, value):
         self.m_loadProgress = value
 
+    ## Handler called when the page has been loaded.
+    # @param ok `bool` load status: `True` = successful load; `False` = error
     @QtCore.pyqtSlot(bool)
     def on_loadFinished(self, ok):
         self.m_loadProgress = 100 if ok else -1
         self.favIconChanged.emit(self.favIcon())
 
+    ## Handler called when the page favicon has been changed.
+    # @param icon `QtGui.QIcon` the new icon
     @QtCore.pyqtSlot(QtGui.QIcon)
     def on_iconChanged(self, icon):
         self.favIconChanged.emit(self.favIcon())
 
+    ## Handler called when page rendering (loading) has been stopped.
+    # @param terminationStatus `QtWebEngineWidgets.QWebEnginePage.RenderProcessTerminationStatus` the termination
+    # status (reason)
+    # @param exitCode `int` the exit (error) code
     @QtCore.pyqtSlot(QtWebEngineWidgets.QWebEnginePage.RenderProcessTerminationStatus, int)
     def on_renderProcessTerminated(self, terminationStatus, exitCode):
         if MsgBox(_(f"Page rendering stopped. Reload page?"), self.window(), _('Rendering stopped'), 'ask') == 'yes':
@@ -214,14 +281,20 @@ class WebView(QtWebEngineWidgets.QWebEngineView):
 # *****          WebPopupWindow
 # ******************************************************************************** #
 
+## Popup window class for browser child dialogs.
 class WebPopupWindow(QtWidgets.QWidget):
 
+    ## @param profile `QtWebEngineWidgets.QWebEngineProfile` browser profile used
+    # @param parent `QtWidget.QWidget` parent widget (web browser)
     def __init__(self, profile: QtWebEngineWidgets.QWebEngineProfile, parent=None):
         super().__init__(parent)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum) 
+        ## `QtWidgets.QLineEdit` current URL address
         self.le_url = QtWidgets.QLineEdit()
+        ## `QtWidgets.QAction` current webpage favicon
         self.act_favicon = QtWidgets.QAction()
+        ## `WebView` current webview (page container)
         self.wview = WebView(self)
         self.layout_main = QtWidgets.QVBoxLayout()
         self.layout_main.setContentsMargins(0, 0, 0, 0)
@@ -237,9 +310,12 @@ class WebPopupWindow(QtWidgets.QWidget):
         self.wview.page().geometryChangeRequested.connect(self.on_geometryChangeRequested)
         self.wview.page().windowCloseRequested.connect(self.close)
 
+    ## @returns `WebView` pointer to current web view
     def view(self):
         return self.wview
 
+    ## Handler called when the dialog is about to be resized.
+    # @param newGeometry `QtCore.QRect` new position / size rect
     @QtCore.pyqtSlot(QtCore.QRect)
     def on_geometryChangeRequested(self, newGeometry):
         window = self.windowHandle()
@@ -252,19 +328,33 @@ class WebPopupWindow(QtWidgets.QWidget):
 # *****          TabWidget
 # ******************************************************************************** #
 
+## @brief Tab widget container for individual web pages placed in tabs (like most browsers).
+# This may be called a boiler plate for a full web browser (only lacking the
+# common web controls and main menu).
 class TabWidget(QtWidgets.QTabWidget):
 
+    ## link hovered signal
     linkHovered = QtCore.pyqtSignal(str)
+    ## load progress signal
     loadProgress = QtCore.pyqtSignal(int)
+    ## page title changed signal
     titleChanged = QtCore.pyqtSignal(str)
+    ## URL changed signal
     urlChanged = QtCore.pyqtSignal(QtCore.QUrl)
+    ## favicon changed signal
     favIconChanged = QtCore.pyqtSignal(QtGui.QIcon)
+    ## web action changed signal
     webActionEnabledChanged = QtCore.pyqtSignal(QtWebEngineWidgets.QWebEnginePage.WebAction, bool)
+    ## development tools requested signal
     devToolsRequested = QtCore.pyqtSignal(QtWebEngineWidgets.QWebEnginePage)
+    ## page search completed signal
     findTextFinished = QtCore.pyqtSignal(QtWebEngineCore.QWebEngineFindTextResult)
 
+    ## @param profile `QtWebEngineWidgets.QWebEngineProfile` web profile used
+    # @param parent `QtWidget.QWidget` parent widget (`BrowserWindow`)
     def __init__(self, profile: QtWebEngineWidgets.QWebEngineProfile, parent=None):
         super().__init__(parent)
+        ## `QtWebEngineWidgets.QWebEngineProfile` web profile used
         self.m_profile = profile
         tabBar = self.tabBar()
         tabBar.setTabsClosable(True)
@@ -278,18 +368,28 @@ class TabWidget(QtWidgets.QTabWidget):
         self.setDocumentMode(True)
         self.setElideMode(QtCore.Qt.ElideRight)
         self.currentChanged.connect(self.on_currentChanged)
+        ## `QtWidgets.QLabel` favicon image on tab
         self.icon = None
         if profile.isOffTheRecord():
             self.icon = QtWidgets.QLabel(self)
             self.icon.setPixmap(QtGui.QPixmap(f"{ICONFOLDER}/view-no.png").scaledToHeight(tabBar.height()))
             self.setStyleSheet(f"QTabWidget::tab-bar {{ left: {self.icon.pixmap().width()}px; }}")
 
+    ## @returns `WebView` pointer to the active web view
     def currentWebView(self):
         return self.webView(self.currentIndex())
 
+    ## Gets a web view by tab position (index).
+    # @param index `int` tab index (0...)
+    # @returns `WebView` pointer to the web view located in tab `index`
     def webView(self, index):
         return self.widget(index)
 
+    ## Navigates to the specified URL.
+    # @param url `QtCore.QUrl`|`str` URL of the address to navigate to
+    # @param newtab `bool` whether to open the URL in a new tab (`True`)
+    # or in the active tab (`False`)
+    # @param background `bool` whether to navigate in background mode
     def navigate(self, url, newtab=True, background=False):
         if newtab:
             webView = self.createBackgroundTab() if background else self.createTab()
@@ -301,6 +401,8 @@ class TabWidget(QtWidgets.QTabWidget):
 
         webView.setUrl(url)
 
+    ## Connects the signals emitted by the given web view to this object.
+    # @param webView `WebView` pointer to a web view (tab contents)
     def setupView(self, webView):
 
         @QtCore.pyqtSlot(str)
@@ -365,12 +467,16 @@ class TabWidget(QtWidgets.QTabWidget):
         webPage.windowCloseRequested.connect(on_webview_windowcloserequested)
         webPage.findTextFinished.connect(on_webview_findtextfinished)
 
+    ## Creates a new tab in foreground.
+    ## @returns `WebView` pointer to the active web view
     @QtCore.pyqtSlot()
     def createTab(self):
         webView = self.createBackgroundTab()
         self.setCurrentWidget(webView)
         return webView
 
+    ## Creates a new tab in background.
+    ## @returns `WebView` pointer to the active web view
     @QtCore.pyqtSlot()
     def createBackgroundTab(self):
         webView = WebView()
@@ -384,11 +490,14 @@ class TabWidget(QtWidgets.QTabWidget):
         webView.show()
         return webView
 
+    ## Reloads all the tabs (web pages).
     @QtCore.pyqtSlot()
     def reloadAllTabs(self):
         for i in range(self.count()):
             self.webView(i).reload()
 
+    ## Closes down all tabs except the one indicated.
+    # @param index `tab` index of the tab that must remain open
     @QtCore.pyqtSlot(int)
     def closeOtherTabs(self, index):
         for i in range(self.count() - 1, index, -1):
@@ -396,6 +505,8 @@ class TabWidget(QtWidgets.QTabWidget):
         for i in range(index - 1, -1, -1):
             self.closeTab(i)
 
+    ## Closes down the indicated tab (web page).
+    # @param index `tab` index of the tab to close
     @QtCore.pyqtSlot(int)
     def closeTab(self, index):
         view = self.webView(index)
@@ -407,6 +518,8 @@ class TabWidget(QtWidgets.QTabWidget):
             self.createTab()
         view.deleteLater()
 
+    ## Clones (duplicates) the indicated tab.
+    # @param index `tab` index of the tab to clone
     @QtCore.pyqtSlot(int)
     def cloneTab(self, index):
         view = self.webView(index)
@@ -414,6 +527,8 @@ class TabWidget(QtWidgets.QTabWidget):
         tab = self.createTab()
         tab.setUrl(view.url())
 
+    ## Navigates to the given URL in the active tab (overrides parent method) 
+    # @param url `QtCore.QUrl` new URL to navigate to
     @QtCore.pyqtSlot(QtCore.QUrl)
     def setUrl(self, url):
         view = self.currentWebView()
@@ -421,6 +536,8 @@ class TabWidget(QtWidgets.QTabWidget):
         view.setUrl(url)
         view.setFocus()
 
+    ## Triggers a web action on the active tab.
+    # @param action `QtWebEngineWidgets.QWebEnginePage.WebAction` web action to trigger
     @QtCore.pyqtSlot(QtWebEngineWidgets.QWebEnginePage.WebAction)
     def triggerWebPageAction(self, action):
         view = self.currentWebView()
@@ -428,6 +545,7 @@ class TabWidget(QtWidgets.QTabWidget):
         view.triggerPageAction(action)
         view.setFocus()
 
+    ## Switches to the next tab (one after the active one).
     @QtCore.pyqtSlot()
     def nextTab(self):
         next_ = self.currentIndex() + 1
@@ -435,6 +553,7 @@ class TabWidget(QtWidgets.QTabWidget):
             next_ = 0
         self.setCurrentIndex(next_)
 
+    ## Switches to the previous tab (one before the active one).
     @QtCore.pyqtSlot()
     def previousTab(self):
         next_ = self.currentIndex() - 1
@@ -442,11 +561,15 @@ class TabWidget(QtWidgets.QTabWidget):
             next_ = self.count() - 1
         self.setCurrentIndex(next_)
 
+    ## Reloads the specified tab.
+    # @param index `tab` index of the tab to reload
     @QtCore.pyqtSlot(int)
     def reloadTab(self, index):
         view = self.webView(index)
         if view: view.reload()
 
+    ## Handler called when the active tab has changed to another one.
+    # @param index `tab` index of the activated tab
     @QtCore.pyqtSlot(int)
     def on_currentChanged(self, index):
         if index != -1:
@@ -471,6 +594,8 @@ class TabWidget(QtWidgets.QTabWidget):
             self.webActionEnabledChanged.emit(QtWebEngineWidgets.QWebEnginePage.Stop, False)
             self.webActionEnabledChanged.emit(QtWebEngineWidgets.QWebEnginePage.Reload, False)
 
+    ## Handler called when the context menu is called.
+    # @param pos `QtCore.QPoint` global position of the cursor
     @QtCore.pyqtSlot(QtCore.QPoint)
     def on_customContextMenuRequested(self, pos):
         menu = QtWidgets.QMenu()
@@ -498,26 +623,36 @@ class TabWidget(QtWidgets.QTabWidget):
 # *****          DownloadWidget
 # ******************************************************************************** #
 
+## Donwload widget (panel) for a single download item.
 class DownloadWidget(QtWidgets.QFrame):
 
+    ## signal triggered when the user clicks the Remove button on the download
     removeClicked = QtCore.pyqtSignal(QtWidgets.QFrame)
 
+    ## @param download `QtWebEngineWidgets.QWebEngineDownloadItem` the download item
+    # @param parent `QtWidget.QWidget` parent widget (`DownloadManagerWidget`)
     def __init__(self, download: QtWebEngineWidgets.QWebEngineDownloadItem, parent=None):
         super().__init__(parent)
+        ## `QtWebEngineWidgets.QWebEngineDownloadItem` the download item
         self.m_download = download
         self.m_download.downloadProgress.connect(self.updateWidget)
         self.m_download.stateChanged.connect(self.updateWidget)
+        ## `QtCore.QElapsedTimer` timer to time downloading
         self.m_timeAdded = QtCore.QElapsedTimer()
         self.m_timeAdded.start()
         self.layout_main = QtWidgets.QGridLayout()
         self.layout_main.setSizeConstraint(QtWidgets.QLayout.SetMinAndMaxSize)
+        ## `QtWidgets.QLabel` downloaded file name
         self.l_filename = QtWidgets.QLabel(self.m_download.downloadFileName())
         self.l_filename.setStyleSheet('font-weight: bold;')
+        ## `QtWidgets.QPushButton` Cancel button
         self.btn_cancel = QtWidgets.QPushButton(QtGui.QIcon(f"{ICONFOLDER}/garbage.png"), _('Cancel'))
         self.btn_cancel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         self.btn_cancel.clicked.connect(self.on_btn_cancel)
+        ## `QtWidgets.QLabel` URL of the download item
         self.l_url = QtWidgets.QLabel(self.m_download.url().toDisplayString())
         self.l_url.setMinimumWidth(350)
+        ## `QtWidgets.QProgressBar` download progress bar
         self.pb = QtWidgets.QProgressBar()
         self.layout_main.addWidget(self.l_filename, 0, 0)
         self.layout_main.addWidget(self.btn_cancel, 0, 1)
@@ -526,6 +661,7 @@ class DownloadWidget(QtWidgets.QFrame):
         self.setLayout(self.layout_main)
         self.updateWidget()
 
+    ## Handler triggered when the Cancel button is clicked.
     @QtCore.pyqtSlot(bool)
     def on_btn_cancel(self, checked):
         if self.m_download.state() == QtWebEngineWidgets.QWebEngineDownloadItem.DownloadInProgress:
@@ -533,6 +669,7 @@ class DownloadWidget(QtWidgets.QFrame):
         else:
             self.removeClicked.emit(self)
 
+    ## Updates the download information (labels, progress etc.)
     @QtCore.pyqtSlot()
     def updateWidget(self):
         totalBytes = self.m_download.totalBytes()
@@ -573,10 +710,13 @@ class DownloadWidget(QtWidgets.QFrame):
 # *****          DownloadManagerWidget
 # ******************************************************************************** #
 
+## Download manager: a container and manager for `DownloadWidget` items.
 class DownloadManagerWidget(QtWidgets.QWidget):
 
+    # @param parent `QtWidget.QWidget` parent widget
     def __init__(self, parent=None):
         super().__init__(parent)
+        ## `int` current number of active downloads
         self.m_numDownloads = 0
         self.setBaseSize(500, 300)
         self.setWindowTitle(_('Downloads'))
@@ -602,6 +742,9 @@ class DownloadManagerWidget(QtWidgets.QWidget):
         self.layout_main.addWidget(self.scroll_main)
         self.setLayout(self.layout_main)
 
+    ## Handler called when download is requested for a `QWebEngineDownloadItem`.
+    # @param download `QtWebEngineWidgets.QWebEngineDownloadItem` download item
+    @QtCore.pyqtSlot(QtWebEngineWidgets.QWebEngineDownloadItem)
     def downloadRequested(self, download: QtWebEngineWidgets.QWebEngineDownloadItem):
         if not download or download.state() != QtWebEngineWidgets.QWebEngineDownloadItem.DownloadRequested:
             return
@@ -614,6 +757,8 @@ class DownloadManagerWidget(QtWidgets.QWidget):
         self.add(DownloadWidget(download))
         self.show()
 
+    ## Adds a new download item.
+    # @param wdownload `DownloadWidget` new download item
     @QtCore.pyqtSlot(DownloadWidget)
     def add(self, wdownload):
         wdownload.removeClicked.connect(self.remove)
@@ -622,6 +767,8 @@ class DownloadManagerWidget(QtWidgets.QWidget):
         if self.m_numDownloads == 0:
             self.l_zeroitems.hide() 
 
+    ## Removes a download item.
+    # @param wdownload `DownloadWidget` download item to remove
     @QtCore.pyqtSlot(QtWidgets.QFrame)
     def remove(self, wdownload):
         self.layout_items.removeWidget(wdownload)
@@ -635,6 +782,8 @@ class DownloadManagerWidget(QtWidgets.QWidget):
 # *****          BrowserWindow
 # ******************************************************************************** #
 
+## Single web browser window, complete with tabbed pages, main menu and
+# action buttons.
 class BrowserWindow(QtWidgets.QMainWindow):
 
     def __init__(self, browser, profile, forDevTools=False):
